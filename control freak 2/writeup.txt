@@ -1,0 +1,49 @@
+========================================================================
+CONTROL FREAK 2  --  LYKNCTF
+Category: Reverse Engineering (x86-64 ELF, anti-debug + CFF)
+FLAG: LYKNCTF{1S_1T_H4RD_T0_C0NTR0L}
+========================================================================
+
+FILES
+-----
+chall-3      ELF 64-bit x86-64 PIE, stripped (Ubuntu GCC 15.2.0)
+chall-3.exe  Windows build
+
+OVERVIEW
+--------
+Control-flow-flattened checker for a 30-byte flag. Anti-debug feeds a seed
+[rsp+4] that is 0 when untraced, garbage when traced (timing loop) or when
+/proc/self/status TracerPid != 0. Use seed = 0 (clean value).
+
+Check (seed=0):
+ 1) Build 256-byte S-box via Fisher-Yates seeded by golden-ratio SplitMix64
+    (0x9e3779b97f4a7c15, 0xbf58476d1ce4e5b9, 0x94d049bb133111eb).
+ 2) Per byte i (0..29), chained dil (init 0xa5):
+       x      = rol8((prng_i ^ input[i]) + (0x5a+0x25*i), i&7)
+       dil    = dil ^ sbox[x]
+       out[i] = dil
+    prng_i = splitmix64(0xd1b54a32d192ed03 + golden*(i+1)) & 0xFF
+ 3) Compare 30 out[i] to blob = rodata[0x2040][0:14] + rodata[0x2050][0:16].
+
+INVERSION
+---------
+ sbox[X_i] = blob[i]^blob[i-1]     (blob[-1]=0xa5)
+ X_i       = sbox_inv[blob[i]^blob[i-1]]
+ input[i]  = prng_i ^ ((ror8(X_i, i&7) - (0x5a+0x25*i)) & 0xFF)
+
+REPRODUCTION
+------------
+  (chall-3 must be in this folder)
+  py -3.12 solve.py
+  -> flag: b'LYKNCTF{1S_1T_H4RD_T0_C0NTR0L}'
+  Optional verify (WSL):
+     qemu-riscv64 is NOT needed - this is x86-64:
+     chmod +x chall-3 && ./chall-3 'LYKNCTF{1S_1T_H4RD_T0_C0NTR0L}'  -> Correct!
+
+FLAG
+----
+LYKNCTF{1S_1T_H4RD_T0_C0NTR0L}
+
+TOOLS
+-----
+Python + Capstone (x86-64 disasm), pure-Python inversion.

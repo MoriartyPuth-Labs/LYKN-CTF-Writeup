@@ -1,0 +1,58 @@
+========================================================================
+CONTROL FREAK 3  --  LYKNCTF
+Category: Reverse Engineering (x86-64 ELF, SIGTRAP-driven bytecode VM)
+FLAG: LYKNCTF{0UT_0F_C0NTR0L_VM2026}
+========================================================================
+
+FILES
+-----
+chall-4      ELF 64-bit x86-64, non-PIE (base 0x400000), stripped
+chall-4.exe  Windows build
+
+OVERVIEW
+--------
+Control-flow-flattened bytecode VM dispatched via a SIGTRAP handler (0x402260)
+and an 8-entry jump table. 5 rounds of SplitMix64-decrypted bytecode drive 8
+opcode handlers (xxHash/SHA/FNV mixers). Each VM instruction hashes a small group
+of input bytes and ORs the result into qword[rsp]. SUCCESS = accumulator == 0
+(verdict at 0x402039). Anti-debug (timing + /proc/self/status TracerPid) only
+corrupts a key r15 that is 0 in a clean run.
+
+No early-exit on wrong bytes -> native brute / side-channel won't work. Emulate.
+
+METHOD
+------
+1) Unicorn x86-64 harness (emu4.py):
+   - map chall-4's 4 PT_LOAD segments
+   - stub libc PLT (ptrace->0, clock_gettime->fixed, signal/raise->0, fopen->handle,
+     fgets->EOF, strstr/strtol/strncpy/strcspn/puts implemented)
+   - pre-set SIGTRAP clean flag [0x40509c]=1
+   - patch the 0x50000 timing loop to 1 iteration (fast, ~0.01s/run)
+   - hook the `or qword[rsp],reg` sites + reads of the input buffer [rsp+0x160]
+2) Trace which input-byte indices each OR-constraint reads. Structure is triangular:
+   every position p has a single-byte constraint (p,) + groups closing at p (max index==p).
+3) Solve left-to-right (solve4c.py): for each p brute byte 32..126 that makes every group
+   closing at p evaluate to 0. Each position has a unique solution.
+
+NOTE
+----
+In the emulator the final accumulator has a residual 0xff (anti-debug r15 would be 0 on
+real hw). So emu4.run(flag) prints "Nope"/acc=0xff, but all 77 per-instruction group
+constraints are 0 -- which is what solve4c.py uses. Verified natively:
+    ./chall-4 'LYKNCTF{0UT_0F_C0NTR0L_VM2026}' -> Correct!
+
+REPRODUCTION
+------------
+  pip install unicorn capstone
+  (emu4.py + chall-4 in this folder)
+  py -3.12 solve4c.py            # prints the flag, ~90s
+  # verify on the real binary (WSL / Linux x86-64):
+  chmod +x chall-4 && ./chall-4 'LYKNCTF{0UT_0F_C0NTR0L_VM2026}'  -> Correct!
+
+FLAG
+----
+LYKNCTF{0UT_0F_C0NTR0L_VM2026}
+
+TOOLS
+-----
+Unicorn Engine (Python), Capstone, WSL/qemu-user for verification.

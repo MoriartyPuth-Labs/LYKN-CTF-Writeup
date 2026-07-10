@@ -1,0 +1,65 @@
+========================================================================
+INFERIOR STUDENT: NOTHING STAY  --  LYKNCTF
+Category: Reverse Engineering (obfuscated Python packer + anti-debug)
+FLAG: LYKNCTF{Im_At_The_PayPhone_Tryin_To_Home_Allof_My_change_1_Spent_0n_u
+       _Where_have_ThE_T1m3S_G0n3_B4bY_Its_Wr0nG_wh3rE_aRe_Th3_Pl4nS_W3_M4d3_F0r_2}
+========================================================================
+
+FILES
+-----
+chall.exe   (PyInstaller, Python 3.12)
+challl.py   (1.2 MB unicode-obfuscated Python, heavy anti-debug)
+
+STRUCTURE
+---------
+Matryoshka packer. Each layer:
+  key = sha256(d1 + bytes([d2 ^ eps]))[:32]
+  pt  = ChaCha20(key, nonce).decrypt(ct)
+  if sha256(pt) != expected: return          # "Nothing Stay"
+  exec(lzma.decompress(pt))                    # next layer (Python 3.12 code object)
+`eps` is an anti-debug accumulator: 0 in a clean run, non-zero if traced/tampered.
+
+CHUNK TABLE
+-----------
+__68a3ce74cb6bc2b44970e0c__ = [ (d1:bytes, d2:int, nonce:bytes, ct:bytes,
+                                 expected_sha256:bytes), ... ]
+
+WHY NORMAL HOOKS FAIL
+---------------------
+The packer integrity-checks exec/marshal/time; hooking any of them (or just slowing
+execution) flips `eps` -> wrong key -> silent bail. ONLY wrapping the crypto library
+(Crypto.Cipher.ChaCha20) is undetected.
+
+SOLUTION PIPELINE
+-----------------
+1) 01_grab_table.py  : wrap ChaCha20.new, steal __68a3ce74cb6bc2b44970e0c__ -> table.pkl
+2) 02_brute_eps.py   : brute eps (=0) per chunk; sha256 check confirms; lzma-decompress
+                       each -> chunkN_pl.bin (Python 3.12 code objects).
+3) 03_capture_and_decrypt_flag.py :
+     - wrap ChaCha20.decrypt to brute eps on the fly and RETURN the eps=0 plaintext,
+       so every nested layer runs correctly.
+     - the innermost checker does:
+         Cipher(ChaCha20(key,nonce)).encryptor().update(processed_input) == target
+       with FIXED key + nonce. ChaCha20 is a stream cipher, so:
+         flag = ChaCha20(key,nonce).decrypt(target)
+     - hook input(); at prompt "flag: " grab the checker locals:
+         var_ac20c8330b5c6c16 = key   (32B)
+         var_68f8ea7d3b0bd13e = nonce (16B)
+         var_2229d99752634209 = target(145B)
+       and decrypt -> flag.
+
+REPRODUCTION
+------------
+  py -3.12 -m pip install pycryptodome cryptography
+  py -3.12 01_grab_table.py challl.py
+  py -3.12 02_brute_eps.py
+  py -3.12 03_capture_and_decrypt_flag.py challl.py   # prints the flag
+
+FLAG
+----
+LYKNCTF{Im_At_The_PayPhone_Tryin_To_Home_Allof_My_change_1_Spent_0n_u_Where_have_
+ThE_T1m3S_G0n3_B4bY_Its_Wr0nG_wh3rE_aRe_Th3_Pl4nS_W3_M4d3_F0r_2}
+
+TOOLS
+-----
+Python 3.12 (must match packer bytecode), pycryptodome, cryptography, hashlib, lzma.

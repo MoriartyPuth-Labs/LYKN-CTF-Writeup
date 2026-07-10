@@ -1,0 +1,34 @@
+Welcome to the Integer Overflow Shop!
+You have 100 coins. The flag is... a little out of budget.
+
+=== CATALOG ===
+  [0] Sticker      18 coin
+  [1] Coffee Mug   36 coin
+  [2] Hoodie       1836 coin
+  [3] The Flag     36363636 coin  (the good stuff)
+Balance: 1836 coin
+
+[c]atalog  [b]uy  [q]uit > Item index: Quantity: Total cost: -36363636 coin
+Purchased -1 x The Flag. New balance: 36365472 coin
+
+=== CATALOG ===
+  [0] Sticker      18 coin
+  [1] Coffee Mug   36 coin
+  [2] Hoodie       1836 coin
+  [3] The Flag     36363636 coin  (the good stuff)
+Balance: 36365472 coin
+
+[c]atalog  [b]uy  [q]uit > Item index: Quantity: Total cost: 36363636 coin
+Purchased 1 x The Flag. New balance: 1836 coin
+
+Here is your flag:
+LYKNCTF{wr4p_wr4p_wr4p}
+
+=== CATALOG ===
+  [0] Sticker      18 coin
+  [1] Coffee Mug   36 coin
+  [2] Hoodie       1836 coin
+  [3] The Flag     36363636 coin  (the good stuff)
+Balance: 1836 coin
+
+[c]atalog  [b]uy  [q]uit > Bye.

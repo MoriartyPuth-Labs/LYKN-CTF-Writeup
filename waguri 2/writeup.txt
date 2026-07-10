@@ -1,0 +1,233 @@
+================================================================================
+  WAGURI 2 — LYKN CTF BRAINFUCK REVERSE ENGINEERING CHALLENGE
+  Flag: LYKNCTF{K40RU_H4N4_W4_R1N_T0_S4KU}
+================================================================================
+
+TABLE OF CONTENTS
+  1. Challenge Overview
+  2. Token Analysis
+  3. Mapping Discovery
+  4. Structure Analysis
+  5. Input Recovery
+  6. Full Verification
+  7. Flag Decoding
+  8. Complete Solver Scripts
+
+================================================================================
+1. CHALLENGE OVERVIEW
+================================================================================
+
+We are given output1.txt containing 23,000 lines. Each line is the full name of
+a character from the manga "Kaoru Hana wa Rin to Saku" (The Fragrant Flower
+Blooms with Dignity):
+
+  - Waguri Kaoruko (薫子)
+  - Kaoru Hana (花)
+  - Natsusawa Saku (夏生)
+  - Tsumugi Rintaro (紬)
+  - Yorita Ayato (綾人)
+  - Hoshina Subaru (昴)
+
+The characters are tokens representing Brainfuck commands. We must:
+  (1) Determine which name maps to which BF command
+  (2) Find the 34-character input that makes the BF program halt
+
+================================================================================
+2. TOKEN ANALYSIS
+================================================================================
+
+First, load and count all tokens:
+
+    with open("output1.txt") as f:
+        content = f.read().strip()
+    tokens = content.split()
+
+    from collections import Counter
+    counts = Counter(tokens)
+
+Results:
+  usami_shohei:      5893    (Note: Usami is a 7th character not among
+  natsusawa_saku:    5893     the main 6 — this is Usami Shouhei)
+  tsumugi_rintaro:   5896
+  waguri_kaoruko:    2664
+  yorita_ayato:      1310
+  hoshina_subaru:    1310
+  kaoru_hana:        34
+
+Key observations:
+  - Total: 23,000 tokens = 23,000 BF commands
+  - yorita_ayato == hoshina_subaru == 1,310 → they are [ and ] (must be equal)
+  - kaoru_hana == 34 → likely the input command ',' since flags are 34 chars
+  - The remaining 4 tokens map to +, -, >, < in some permutation
+
+================================================================================
+3. MAPPING DISCOVERY
+================================================================================
+
+We test the mapping (called "Mapping B"):
+
+  Token              → BF Command
+  --------------------------------
+  usami_shohei       → >
+  natsusawa_saku     → <
+  tsumugi_rintaro    → -
+  waguri_kaoruko     → +
+  kaoru_hana         → ,
+  yorita_ayato       → [
+  hoshina_subaru     → ]
+
+This produces recognizable BF idioms:
+
+  Pattern [-<+>]     → [tsumugi natsusawa waguri usami]
+  Pattern [>+[-]<]   → [usami waguri yorita tsumugi hoshina natsusawa]
+
+Standard BF copy loop: "[-<+>]" copies a cell's value one position left.
+Guard loop: "[>+[-]<]" tests if a cell is non-zero — if so, it loops forever.
+
+No other permutation of +,-,>,< produces BOTH of these recognizable idioms.
+
+================================================================================
+4. STRUCTURAL ANALYSIS
+================================================================================
+
+Using Mapping B, we analyze all loop bodies in the 23,000-command program:
+
+    Pattern         Count    Purpose
+    -------         -----    -------
+    [-]               790    Clear cell
+    [--]              361    Divide cell by 2
+    [-<+>]            34     Copy-left transformation (1 per input char)
+    [>+[-]<]          12     Guard loop (infinite if entered)
+    [<+++>-]          19     Multiply left cell by 3
+    [<++++>-]         15     Multiply left cell by 4
+    [>>+[-]<<]         7     Guard loop
+    [>>>++[--]<<<]     9     Complex transformation
+    [><]               6     Validation guard (infinite if cell != 0)
+
+There are exactly 34 commas, splitting the program into 34 segments.
+Each segment validates ONE input character. The structure is:
+
+    ,[segment 0],[segment 1],[segment 2],...,[segment 33]
+
+Each segment performs computations on the input value and ends with a guard
+loop like "[><]" or "[>+[-]<]". If the computation result ≠ 0 at the guard,
+the program loops forever. If the result == 0, the guard is skipped and the
+program proceeds to the next comma to read the next character.
+
+================================================================================
+5. INPUT RECOVERY
+================================================================================
+
+Each segment independently validates one byte. We extract all 34 segments:
+
+    comma_pos = [i for i, c in enumerate(bf) if c == ',']
+    segments = [bf[comma_pos[i]+1:comma_pos[i+1]] for i in range(len(cp)-1)]
+    segments.append(bf[comma_pos[-1]+1:])
+
+For each segment, we test all 256 byte values:
+
+    for seg in segments:
+        precompute bracket jumps for the segment
+        for value in 0..255:
+            tape = [0]*300; ptr = 150; tape[ptr] = value
+            emulate BF segment with max 500,000 steps
+            if segment completes (ip >= len(seg)):
+                this value is correct for this position
+                break
+
+Results:
+
+    seg  0: value=76  ('L')  in   734 steps
+    seg  1: value=89  ('Y')  in  1401 steps
+    seg  2: value=75  ('K')  in  1345 steps
+    seg  3: value=78  ('N')  in   904 steps
+    seg  4: value=67  ('C')  in   718 steps
+    seg  5: value=84  ('T')  in  1622 steps
+    seg  6: value=70  ('F')  in  1078 steps
+    seg  7: value=123 ('{')  in  1686 steps
+    seg  8: value=75  ('K')  in  1387 steps
+    seg  9: value=52  ('4')  in  1175 steps
+    seg 10: value=48  ('0')  in  1153 steps
+    seg 11: value=82  ('R')  in  1234 steps
+    seg 12: value=85  ('U')  in   780 steps
+    seg 13: value=95  ('_')  in   868 steps
+    seg 14: value=72  ('H')  in   690 steps
+    seg 15: value=52  ('4')  in  1206 steps
+    seg 16: value=78  ('N')  in   980 steps
+    seg 17: value=52  ('4')  in  1033 steps
+    seg 18: value=95  ('_')  in  1050 steps
+    seg 19: value=87  ('W')  in   827 steps
+    seg 20: value=52  ('4')  in   972 steps
+    seg 21: value=95  ('_')  in  1002 steps
+    seg 22: value=82  ('R')  in  1363 steps
+    seg 23: value=49  ('1')  in  1000 steps
+    seg 24: value=78  ('N')  in  1021 steps
+    seg 25: value=95  ('_')  in  1082 steps
+    seg 26: value=84  ('T')  in  1038 steps
+    seg 27: value=48  ('0')  in  1482 steps
+    seg 28: value=95  ('_')  in  1384 steps
+    seg 29: value=83  ('S')  in  1279 steps
+    seg 30: value=52  ('4')  in   804 steps
+    seg 31: value=75  ('K')  in  1004 steps
+    seg 32: value=85  ('U')  in   969 steps
+    seg 33: value=125 ('}')  in  1248 steps
+
+Concatenated: LYKNCTF{K40RU_H4N4_W4_R1N_T0_S4KU}
+
+================================================================================
+6. FULL VERIFICATION
+================================================================================
+
+Running the complete BF program (all 23,000 commands) with the 34 discovered
+values as input confirms the solution:
+
+    - Halts: YES
+    - Total steps: 37,565
+    - Input consumed: 34/34 characters
+
+================================================================================
+7. FLAG DECODING
+================================================================================
+
+LYKNCTF{K40RU_H4N4_W4_R1N_T0_S4KU}
+
+The inner content uses leet speak:
+
+  K40RU  → KAORU   (Waguri Kaoruko)
+  H4N4   → HANA    (Kaoru Hana — the flower)
+  W4     → WA      (Japanese particle は)
+  R1N    → RIN     (Tsumugi Rintaro)
+  T0     → TO      (Japanese particle と)
+  S4KU   → SAKU    (Natsusawa Saku)
+
+Decoded: "KAORU_HANA_WA_RIN_TO_SAKU"
+          薫る花は凛と咲く
+
+Translation: "The Fragrant Flower Blooms with Dignity"
+This is the title of the manga that all characters belong to.
+
+================================================================================
+8. PYTHON SCRIPTS
+================================================================================
+
+All solver scripts are provided as separate .py files:
+
+  solve.py          — THE SOLVER: maps tokens → BF, brute-forces all 34
+                      segments, prints the flag, verifies full program halts
+
+  analyze_bf.py     — Token counting + BF structural analysis (loop patterns)
+                      Used to confirm Mapping B is correct
+
+  trace_ip.py       — Instruction-pointer-level tracer
+                      Identifies where execution gets stuck ([><] guard loops)
+
+  fast_emulate.py   — Segment-level brute-force (breakthrough)
+                      FIRST script to find value 76 = 'L' in segment 0
+
+  full_bf_run.py    — Tests full program with 'L'*34; discovers that later
+                      segments need different values
+
+Usage:
+  1. Place output1.txt in the same directory as the scripts
+  2. Run: python solve.py
+  3. Or run each script sequentially to follow the solution process

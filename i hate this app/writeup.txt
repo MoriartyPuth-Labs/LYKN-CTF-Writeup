@@ -1,0 +1,41 @@
+========================================================================
+I HATE THIS APP  --  LYKNCTF
+Category: Reverse Engineering (Windows PE) | Difficulty: Beginner
+FLAG: LYKNCTF{setwindowdisplayaffinity}
+========================================================================
+
+PROMPT
+------
+"...It feels like the app is transparent to my screen. I can see it, but I
+can't capture it..."  Find the function that prevents screenshots.
+FLAG FORMAT: LYKNCTF{function_name}  (lowercase, no spaces)
+
+FILES
+-----
+fuoverflow_learning.rar -> fuoverflow_learning.exe
+  PE32+ executable (GUI) x86-64, for MS Windows, 6 sections
+
+SOLUTION
+--------
+Windows apps block screenshots with the compositor API:
+    SetWindowDisplayAffinity(hWnd, WDA_EXCLUDEFROMCAPTURE / WDA_MONITOR)
+from user32.dll. The window is drawn on the monitor but excluded from screen
+capture (appears black/blank), matching "visible but not capturable".
+
+REPRODUCTION
+------------
+1) Extract with WinRAR.
+2) Confirm the import:
+     grep -a -o -i "SetWindowDisplayAffinity" fuoverflow_learning.exe | sort -u
+        -> SetWindowDisplayAffinity
+     grep -a -o -i "user32" fuoverflow_learning.exe | sort | uniq -c
+        -> 7 user32
+   The function is imported from user32.dll. Challenge only asks for the name.
+
+FLAG
+----
+LYKNCTF{setwindowdisplayaffinity}
+
+TOOLS
+-----
+WinRAR, Git-Bash grep.

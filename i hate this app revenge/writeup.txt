@@ -1,0 +1,46 @@
+========================================================================
+I HATE THIS APP REVENGE  --  LYKNCTF
+Category: Reverse Engineering (Rust/Tauri + crypto) | Difficulty: Beginner
+FLAG: LYKNCTF{alolanvulpix}
+========================================================================
+
+FILES
+-----
+726471288_..._n.enc.bin   (33112 bytes, encrypted image)
+fuoverflow_learning (1).rar -> fuoverflow_learning.exe  (Rust Tauri app)
+
+FILE LAYOUT
+-----------
+First 12 bytes = fixed nonce: 00 11 22 33 44 55 66 77 00 00 00 07
+Rest = AES-256-CTR ciphertext (no GCM tag).
+
+KEYS (from the Rust binary)
+---------------------------
+The app defines env-var-with-default secrets in src\commands\decrypt.rs.
+Defaults are one ASCII blob at VA 0x140c5fdf0:
+  3qyJU3Z6IXlfpr2CErOHH76ugQcAoWzY H}3t%^nDw5F?cWj-XAH!Dj8AakaD9y9M
+  FUO_PASS_SECRET (0:32)           FIXED_ENCRYPTION_KEY (32:64)
+
+CIPHER (decrypt_fixed @ 0x1401fa2b0)
+------------------------------------
+  key   = FIXED_ENCRYPTION_KEY  (AES-256)
+  nonce = file[0:12]
+  counter_block[i] = file[0:8] ++ (7 + i).to_bytes(8,'big')
+  plaintext = ciphertext XOR AES_ECB(counter_block[i])
+
+DECRYPT -> JPEG (FF D8 FF E0 "JFIF" ... FF D9). Render -> white ice-fox
+Pokemon with curled tail in snow = ALOLAN VULPIX.
+
+REPRODUCTION
+------------
+  python recover.py fuoverflow_learning.exe 726471288_..._n.enc.bin recovered.jpg
+  (or run recover.py with no exe; the key is hardcoded)
+
+FLAG
+----
+LYKNCTF{alolanvulpix}
+
+TOOLS
+-----
+WinRAR, Python + Capstone (disasm), pycryptodome (AES-ECB for CTR keystream),
+image viewer.

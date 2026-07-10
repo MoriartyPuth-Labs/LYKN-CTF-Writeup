@@ -1,0 +1,64 @@
+# World Cup 1
+
+**Category:** Forensics (LSB steganography)
+**Status:** SOLVED
+**Flag:** `LYKNCTF{Argentina3-2CaboVerde}`
+
+## Challenge Description
+
+Scenario text (flavor):
+> "I woke up at 5 AM Vietnam time (UTC+7) to watch my favorite player Messi score goals, but
+> instead I witnessed Cabo Verde playing so resiliently and bravely despite facing the defending
+> champions for the full 120 minutes. The fairytale has ended, but the pride will remain forever."
+
+Provided: an image of a FIFA World Cup 2026 scoreboard graphic (Argentina 3-2 Cabo Verde, AET).
+File: `worldcup1_challenge.png` (512x640 RGB PNG, ~533KB).
+
+## Walkthrough / Reasoning
+
+1. **Chunk parse** (manual Python, no `pngcheck`/`binwalk` available). Found three `tEXt` chunks:
+   - `Flag_Hint` = **"Look deeper in the red pixels"**  ← points at red-channel LSB stego
+   - `Comment`   = "The score was 3-2 after extra time"
+   - `Description`= "Argentina vs Cabo Verde - World Cup 2026"
+
+2. **Trailing data after IEND** (69 bytes):
+   ```
+   HIDDEN_DATA_STARTPassword hint: What was the final score? Format: X-Y
+   ```
+   This is a **red herring / distractor** — there is no encrypted container; it just baits you
+   toward a "3-2" password.
+
+3. **Followed the real hint** ("red pixels"): extracted the **least-significant bit of the RED
+   channel**, MSB-first bit order, row-major. The decoded byte stream begins immediately with the
+   flag, terminated right after `}` (followed by `\xff\xfe...` garbage from the rest of the image).
+
+## Key Technique
+Red-channel LSB extraction, MSB-first, grouped into bytes. Classic beginner stego; the metadata
+`Flag_Hint` chunk literally tells you which channel to read.
+
+## Tools Used
+- Python 3.11 + Pillow (PIL) for pixel access
+- Manual PNG chunk parser + trailing-byte check
+
+## PoC / Reproduction Script
+See `solve.py`. Core:
+
+```python
+from PIL import Image
+im = Image.open("worldcup1_challenge.png").convert("RGB")
+px = list(im.getdata())
+bits = [p[0] & 1 for p in px]           # red channel LSB
+out = bytearray()
+for i in range(0, len(bits)-7, 8):
+    v = 0
+    for j in range(8):
+        v = (v << 1) | bits[i+j]        # MSB-first
+    out.append(v)
+data = bytes(out)
+print(data[:60])   # b'LYKNCTF{Argentina3-2CaboVerde}\xff\xfe...'
+```
+
+## Reasoning Notes
+- Two decoys were present (the `HIDDEN_DATA_START` trailing password-hint blob, and the "3-2"
+  score bait). The `Flag_Hint` tEXt chunk was the authoritative pointer.
+- Lesson: read ALL PNG text chunks first; the challenge author often signposts the intended path.
