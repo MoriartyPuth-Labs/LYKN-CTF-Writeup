@@ -1,7 +1,7 @@
 # LYKNCTF — ez pwn revenge
 
 **Category:** Pwn  
-**Difficulty:** Beginner  
+**Difficulty:** Medium
 **Flag:** `LYKNCTF{https://www.youtube.com/watch?v=Cl7FBLLi73Q&list=RDCl7FBLLi73Q&start_radio=1}`
 
 ---
