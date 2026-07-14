@@ -4,7 +4,7 @@ Writeups, solve scripts, and challenge files for solved LYKN CTF challenges, org
 folder per category. Each challenge folder contains a `README.md` (and often a `writeup.txt`)
 plus the exploit/solve scripts and original challenge artifacts.
 
-**34 challenges** across [Pwn](./Pwn), [Reverse Engineering](./Reverse%20Engineering),
+**36 challenges** across [Pwn](./Pwn), [Reverse Engineering](./Reverse%20Engineering),
 [Crypto](./Crypto), [OSINT](./OSINT), [Forensics](./Forensics), [Web](./Web), and [Misc](./Misc).
 
 Difficulty is my own assessment of what the solve actually required (technique depth, tooling,
@@ -73,6 +73,8 @@ number of steps), not just the label the challenge author gave it — rated on a
 | Challenge | Difficulty | Flag |
 |---|---|---|
 | [waguri 1](./Web/waguri%201) (WebSocket race condition) | Easy | `LYKNCTF{f3d4b9163035412cac167209455dd2b1}` |
+| [Discord Nitro](./Web/Discord%20Nitro) (JWT alg:none) | Easy | `LYKNCTF{8ca07868c81c46549512df28e26bde1d}` |
+| [Migrant](./Web/Migrant) (AES-CBC padding oracle → CBC-R) | Medium | `LYKNCTF{...}` (per-instance) |
 
 ## Misc
 
